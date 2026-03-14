@@ -13,9 +13,11 @@ from dynamo.common.multimodal.embedding_transfer import (
     NixlWriteEmbeddingSender,
     TransferRequest,
 )
+from dynamo.common.multimodal.audio_loader import AudioLoader
 from dynamo.common.multimodal.image_loader import ImageLoader
 
 __all__ = [
+    "AudioLoader",
     "AsyncEncoderCache",
     "ImageLoader",
     "NixlReadEmbeddingReceiver",

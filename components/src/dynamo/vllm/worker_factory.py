@@ -18,6 +18,7 @@ from .multimodal_handlers import (
     EncodeWorkerHandler,
     MultimodalDecodeWorkerHandler,
     MultimodalPDWorkerHandler,
+    VideoEncodeWorkerHandler,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class WorkerFactory:
             config.multimodal_encode_worker
             or config.multimodal_worker
             or config.multimodal_decode_worker
+            or config.video_encode_worker
         )
 
     async def create(
@@ -62,7 +64,11 @@ class WorkerFactory:
     ) -> None:
         """Create the appropriate multimodal worker based on config flags."""
 
-        if config.multimodal_encode_worker:
+        if config.video_encode_worker:
+            await self._create_video_encode_worker(
+                runtime, config, shutdown_event, shutdown_endpoints
+            )
+        elif config.multimodal_encode_worker:
             await self._create_multimodal_encode_worker(
                 runtime, config, shutdown_event, shutdown_endpoints
             )
@@ -235,6 +241,43 @@ class WorkerFactory:
             await asyncio.gather(*serve_tasks)
         except Exception as e:
             logger.error(f"Failed to serve endpoints: {e}")
+            raise
+        finally:
+            handler.cleanup()
+
+    async def _create_video_encode_worker(
+        self,
+        runtime: DistributedRuntime,
+        config: Config,
+        shutdown_event: asyncio.Event,
+        shutdown_endpoints: list,  # mutated in place
+    ) -> None:
+        """Initialize standalone video encode worker.
+
+        Processes raw video frames and transfers them via RDMA to the downstream
+        PD worker.  Registered with ``ModelInput.Tokens`` so the Rust frontend
+        can dispatch requests that already carry token IDs alongside a video URL.
+        """
+        generate_endpoint = runtime.endpoint(
+            f"{config.namespace}.{config.component}.{config.endpoint}"
+        )
+        shutdown_endpoints[:] = [generate_endpoint]
+
+        handler = VideoEncodeWorkerHandler(
+            config.engine_args,
+            num_frames_to_sample=config.num_frames_to_sample,
+        )
+        await handler.async_init(runtime)
+        logger.info("Starting to serve the video encode worker endpoint...")
+
+        try:
+            await asyncio.gather(
+                generate_endpoint.serve_endpoint(
+                    handler.generate, metrics_labels=[("model", config.model)]
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Failed to serve video encode worker endpoint: {e}")
             raise
         finally:
             handler.cleanup()

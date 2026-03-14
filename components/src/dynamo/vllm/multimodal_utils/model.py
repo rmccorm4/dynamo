@@ -52,6 +52,7 @@ class SupportedModels:
     QWEN_3_VL_32B = "Qwen/Qwen3-VL-32B-Instruct"
     QWEN_3_VL_32B_FP8 = "Qwen/Qwen3-VL-32B-Instruct-FP8"
     LLAVA_NEXT_VIDEO_7B = "llava-hf/LLaVA-NeXT-Video-7B-hf"
+    QWEN_3_VL_7B = "Qwen/Qwen3-VL-7B-Instruct"
 
 
 def normalize_model_name(model_name: str) -> str:
@@ -153,6 +154,18 @@ def is_qwen_vl_model(model_name: str) -> bool:
     """
     return any(
         is_model_supported(model_name, qwen_model) for qwen_model in QWEN_VL_MODELS
+    )
+
+
+# Models that consume raw video frames rather than image embeddings
+_VIDEO_MODELS = {SupportedModels.LLAVA_NEXT_VIDEO_7B, SupportedModels.QWEN_3_VL_7B}
+
+
+def is_video_model(model: str) -> bool:
+    """Return True if the model expects raw video frames as input."""
+    return (
+        any(is_model_supported(model, vm) for vm in _VIDEO_MODELS)
+        or "video" in model.lower()
     )
 
 

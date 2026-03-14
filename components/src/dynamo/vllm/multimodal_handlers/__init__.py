@@ -1,14 +1,22 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from dynamo.vllm.multimodal_handlers.audio_encode_worker_handler import (
+    AudioEncodeWorkerHandler,
+)
 from dynamo.vllm.multimodal_handlers.encode_worker_handler import EncodeWorkerHandler
 from dynamo.vllm.multimodal_handlers.multimodal_pd_worker_handler import (
     MultimodalPDWorkerHandler,
 )
+from dynamo.vllm.multimodal_handlers.video_encode_worker_handler import (
+    VideoEncodeWorkerHandler,
+)
 from dynamo.vllm.multimodal_handlers.worker_handler import MultimodalDecodeWorkerHandler
 
 __all__ = [
+    "AudioEncodeWorkerHandler",
     "EncodeWorkerHandler",
     "MultimodalPDWorkerHandler",
     "MultimodalDecodeWorkerHandler",
+    "VideoEncodeWorkerHandler",
 ]

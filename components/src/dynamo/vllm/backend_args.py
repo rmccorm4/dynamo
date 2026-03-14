@@ -104,6 +104,28 @@ class DynamoVllmArgGroup(ArgGroup):
         )
         add_negatable_bool_argument(
             g,
+            flag_name="--video-encode-worker",
+            env_var="DYN_VLLM_VIDEO_ENCODE_WORKER",
+            default=False,
+            help="Run as video encode worker component for processing raw video frames via RDMA.",
+        )
+        add_negatable_bool_argument(
+            g,
+            flag_name="--multimodal-audio-encode-worker",
+            env_var="DYN_VLLM_MULTIMODAL_AUDIO_ENCODE_WORKER",
+            default=False,
+            help="Run as multimodal audio encode worker component for processing audio (Qwen2-Audio).",
+        )
+        add_argument(
+            g,
+            flag_name="--num-frames-to-sample",
+            env_var="DYN_VLLM_NUM_FRAMES_TO_SAMPLE",
+            default=8,
+            arg_type=int,
+            help="Number of frames to sample from the video for the video encode worker. Default: 8",
+        )
+        add_negatable_bool_argument(
+            g,
             flag_name="--enable-multimodal",
             env_var="DYN_VLLM_ENABLE_MULTIMODAL",
             default=False,
@@ -332,6 +354,9 @@ class DynamoVllmConfig(ConfigBase):
     multimodal_encode_worker: bool
     multimodal_worker: bool
     multimodal_decode_worker: bool
+    video_encode_worker: bool
+    multimodal_audio_encode_worker: bool
+    num_frames_to_sample: int
     enable_multimodal: bool
     mm_prompt_template: str
     frontend_decoding: bool
@@ -450,6 +475,8 @@ class DynamoVllmConfig(ConfigBase):
                 bool(self.multimodal_encode_worker),
                 bool(self.multimodal_worker),
                 bool(self.multimodal_decode_worker),
+                bool(self.video_encode_worker),
+                bool(self.multimodal_audio_encode_worker),
             ]
         )
 
@@ -458,7 +485,8 @@ class DynamoVllmConfig(ConfigBase):
         if self._count_multimodal_roles() > 1:
             raise ValueError(
                 "Use only one of --multimodal-encode-worker, --multimodal-worker, "
-                "--multimodal-decode-worker"
+                "--multimodal-decode-worker, --video-encode-worker, "
+                "--multimodal-audio-encode-worker"
             )
 
     def _validate_multimodal_requires_flag(self) -> None:
