@@ -68,18 +68,20 @@ class EncodeWorkerHandler:
         self.vision_model = load_vision_model(
             self.model, enforce_eager=self.engine_args.enforce_eager
         )
-        hidden_size = getattr(self.vision_model, "out_hidden_size", None)
-        if hidden_size is None:
-            hidden_size = getattr(
-                getattr(self.vision_model, "config", None), "hidden_size", "unknown"
-            )
-        logger.debug(f"embedding hidden dim: {hidden_size}")
-        self.min_workers = 1
 
         # Get encoder components for the model
         self.vision_encoder, self.projector = get_encoder_components(
             self.model, self.vision_model
         )
+
+        # Log the vision encoder hidden dimension for debugging
+        hidden_size = getattr(self.vision_encoder, "out_hidden_size", None)
+        if hidden_size is None:
+            hidden_size = getattr(
+                getattr(self.vision_encoder, "config", None), "hidden_size", "unknown"
+            )
+        logger.debug(f"embedding hidden dim: {hidden_size}")
+        self.min_workers = 1
         self._connector: connect.Connector | None = None
         self._accumulated_time = 0.0
         self._processed_requests = 0
@@ -238,10 +240,24 @@ class EncodeWorkerHandler:
                     )
 
                 with _nvtx.annotate("mm:enc:split_embeddings", color="orange"):
-                    # [gluo FIXME] This is specific to qwen vision processing..
-                    # Split concatenated embeddings for each image item.
+                    # Split concatenated embeddings for Qwen-style models that
+                    # concatenate all image features and require splitting by grid size.
                     if is_qwen_vl_model(self.model):
-                        merge_size = self.vision_encoder.spatial_merge_size
+                        merge_size = getattr(
+                            self.vision_encoder, "spatial_merge_size", None
+                        )
+                        if merge_size is None:
+                            # AutoModel path: spatial_merge_size is on .visual
+                            merge_size = getattr(
+                                getattr(self.vision_encoder, "visual", None),
+                                "spatial_merge_size",
+                                None,
+                            )
+                        if merge_size is None:
+                            raise AttributeError(
+                                f"Could not find spatial_merge_size on vision encoder "
+                                f"for Qwen VL model '{self.model}'"
+                            )
                         sizes = (
                             image_embeds["image_grid_thw"].prod(-1)
                             // merge_size

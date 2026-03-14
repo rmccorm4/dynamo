@@ -15,8 +15,9 @@ from dynamo.vllm.multimodal_utils.encode_utils import (
     get_encoder_components,
 )
 from dynamo.vllm.multimodal_utils.model import (
-    SupportedModels,
+    ModelFamily,
     construct_mm_data,
+    detect_model_family,
     load_vision_model,
 )
 from dynamo.vllm.multimodal_utils.prefill_worker_utils import load_multimodal_embeddings
@@ -38,8 +39,9 @@ __all__ = [
     "get_encoder_components",
     "get_http_client",
     "ImageLoader",
-    "SupportedModels",
+    "ModelFamily",
     "construct_mm_data",
+    "detect_model_family",
     "load_vision_model",
     "MultiModalInput",
     "MultiModalGroup",

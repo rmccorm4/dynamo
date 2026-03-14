@@ -13,45 +13,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import enum
 import logging
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
-from transformers import AutoModel
+from transformers import AutoConfig, AutoModel
 from vllm import LLM
 from vllm.utils.system_utils import update_environment_variables
 
 logger = logging.getLogger(__name__)
 
-# [gluo NOTE] Debug flag to compare vLLM encoder vs transformers encoder,
-# should be removed once there is proper way to extract vLLM encoder.
+# Set VLLM_ENCODER=0 to skip the vLLM encoder attempt and always use AutoModel.
 VLLM_ENCODER = int(os.getenv("VLLM_ENCODER", 1))
 
 
-class SupportedModels:
-    """Supported multimodal model identifiers"""
+class ModelFamily(enum.Enum):
+    """Detected vision model family, used for model-specific encoding behavior."""
 
-    # TODO: Replace this explicit model list with dynamic detection using
-    # HF config `architectures` field or vLLM's model registry, so any
-    # vLLM-supported VLM works without maintaining entries here.
+    QWEN_VL = "qwen_vl"  # Qwen2-VL, Qwen2.5-VL, Qwen3-VL (uses image_grid_thw / mRoPE)
+    LLAVA = "llava"  # LLaVA 1.5 and similar (vision_tower + projector)
+    LLAVA_VIDEO = "llava_video"  # LLaVA-NeXT-Video
+    GENERIC = "generic"  # Unknown model family
 
-    LLAVA_1_5_7B = "llava-hf/llava-1.5-7b-hf"
-    QWEN_2_VL_2B = "Qwen/Qwen2-VL-2B-Instruct"
-    QWEN_2_5_VL_3B = "Qwen/Qwen2.5-VL-3B-Instruct"
-    QWEN_2_5_VL_7B = "Qwen/Qwen2.5-VL-7B-Instruct"
-    QWEN_2_5_VL_32B = "Qwen/Qwen2.5-VL-32B-Instruct"
-    QWEN_3_VL_2B = "Qwen/Qwen3-VL-2B-Instruct"
-    QWEN_3_VL_30B_A3B = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    QWEN_3_VL_30B_A3B_FP8 = "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
-    QWEN_3_VL_8B = "Qwen/Qwen3-VL-8B-Instruct"
-    QWEN_3_VL_8B_FP8 = "Qwen/Qwen3-VL-8B-Instruct-FP8"
-    QWEN_3_VL_4B = "Qwen/Qwen3-VL-4B-Instruct"
-    QWEN_3_VL_4B_FP8 = "Qwen/Qwen3-VL-4B-Instruct-FP8"
-    QWEN_3_VL_32B = "Qwen/Qwen3-VL-32B-Instruct"
-    QWEN_3_VL_32B_FP8 = "Qwen/Qwen3-VL-32B-Instruct-FP8"
-    LLAVA_NEXT_VIDEO_7B = "llava-hf/LLaVA-NeXT-Video-7B-hf"
+
+# HuggingFace model_type values for each family
+_QWEN_VL_MODEL_TYPES = frozenset({"qwen2_vl", "qwen2_5_vl", "qwen3_vl"})
+_LLAVA_MODEL_TYPES = frozenset({"llava", "llava_next"})
+_LLAVA_VIDEO_MODEL_TYPES = frozenset({"llava_next_video"})
+
+# Tracks whether the last load_vision_model call succeeded via vLLM
+_vllm_encoder_active = False
 
 
 def normalize_model_name(model_name: str) -> str:
@@ -106,44 +101,55 @@ def normalize_model_name(model_name: str) -> str:
     return model_name
 
 
-def is_model_supported(model_name: str, supported_model: str) -> bool:
+@lru_cache(maxsize=16)
+def detect_model_family(model_name: str) -> ModelFamily:
+    """Detect vision model family from HuggingFace config metadata.
+
+    Uses the model's ``model_type`` and ``architectures`` fields to determine
+    the model family without loading weights. Results are cached per model_name.
     """
-    Check if a model name matches a supported model, handling various naming formats.
+    try:
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+        model_type = getattr(config, "model_type", "").lower()
 
-    Args:
-        model_name: The model name to check (may be path, cache name, etc.)
-        supported_model: The supported model identifier
+        if model_type in _QWEN_VL_MODEL_TYPES:
+            return ModelFamily.QWEN_VL
+        if model_type in _LLAVA_VIDEO_MODEL_TYPES:
+            return ModelFamily.LLAVA_VIDEO
+        if model_type in _LLAVA_MODEL_TYPES:
+            return ModelFamily.LLAVA
 
-    Returns:
-        True if the model is supported, False otherwise
-    """
-    normalized_name = normalize_model_name(model_name).lower()
-    normalized_supported = normalize_model_name(supported_model).lower()
+        # Fallback: check architectures for broader matching
+        architectures = getattr(config, "architectures", []) or []
+        arch_str = " ".join(architectures).lower()
+        if "qwen" in arch_str and "vl" in arch_str:
+            return ModelFamily.QWEN_VL
+        if "video" in arch_str and "llava" in arch_str:
+            return ModelFamily.LLAVA_VIDEO
+        if "llava" in arch_str:
+            return ModelFamily.LLAVA
 
-    return normalized_name == normalized_supported
-
-
-# List of all Qwen VL model variants for easy extension
-QWEN_VL_MODELS = [
-    SupportedModels.QWEN_2_VL_2B,
-    SupportedModels.QWEN_2_5_VL_3B,
-    SupportedModels.QWEN_2_5_VL_7B,
-    SupportedModels.QWEN_2_5_VL_32B,
-    SupportedModels.QWEN_3_VL_2B,
-    SupportedModels.QWEN_3_VL_30B_A3B,
-    SupportedModels.QWEN_3_VL_30B_A3B_FP8,
-    SupportedModels.QWEN_3_VL_8B,
-    SupportedModels.QWEN_3_VL_8B_FP8,
-    SupportedModels.QWEN_3_VL_4B,
-    SupportedModels.QWEN_3_VL_4B_FP8,
-    SupportedModels.QWEN_3_VL_32B,
-    SupportedModels.QWEN_3_VL_32B_FP8,
-]
+        logger.info(
+            "Model '%s' (model_type='%s', architectures=%s) not recognized as a known "
+            "VLM family; treating as generic.",
+            model_name,
+            model_type,
+            architectures,
+        )
+        return ModelFamily.GENERIC
+    except Exception as e:
+        logger.warning(
+            "Could not load config for model '%s' to detect family: %s. "
+            "Treating as generic.",
+            model_name,
+            e,
+        )
+        return ModelFamily.GENERIC
 
 
 def is_qwen_vl_model(model_name: str) -> bool:
     """
-    Check if a model is any Qwen VL variant.
+    Check if a model is a Qwen VL variant using config-based detection.
 
     Args:
         model_name: The model name to check
@@ -151,42 +157,90 @@ def is_qwen_vl_model(model_name: str) -> bool:
     Returns:
         True if the model is a Qwen VL variant, False otherwise
     """
-    return any(
-        is_model_supported(model_name, qwen_model) for qwen_model in QWEN_VL_MODELS
-    )
+    return detect_model_family(model_name) == ModelFamily.QWEN_VL
+
+
+def is_video_model(model_name: str) -> bool:
+    """
+    Check if a model is a video model using config-based detection.
+
+    Args:
+        model_name: The model name to check
+
+    Returns:
+        True if the model is a video model, False otherwise
+    """
+    return detect_model_family(model_name) == ModelFamily.LLAVA_VIDEO
+
+
+def is_vllm_encoder_active() -> bool:
+    """Return whether the vision model was successfully loaded via the vLLM encoder."""
+    return _vllm_encoder_active
 
 
 def load_vision_model(model_id: str, enforce_eager: bool = False) -> torch.nn.Module:
+    """Load a vision model, trying vLLM's encoder-only mode first.
+
+    Always attempts to load via vLLM's ``mm_encoder_only`` mode, which avoids
+    loading full LLM weights and uses significantly less GPU memory. Falls back
+    to ``AutoModel.from_pretrained()`` with a warning if vLLM fails (e.g. when
+    the model architecture is not yet supported by vLLM's encoder-only path).
+
+    Set ``VLLM_ENCODER=0`` to skip the vLLM attempt entirely.
     """
-    Load a vision model from a HuggingFace model ID.
-    """
-    if VLLM_ENCODER and is_qwen_vl_model(model_id):
-        # Disable to get ViT from the same process
-        update_environment_variables(
-            {
-                "VLLM_ENABLE_V1_MULTIPROCESSING": "0",
-            }
+    global _vllm_encoder_active
+
+    if not VLLM_ENCODER:
+        logger.info(
+            "VLLM_ENCODER=0: skipping vLLM encoder, using AutoModel for '%s'",
+            model_id,
+        )
+        _vllm_encoder_active = False
+        return AutoModel.from_pretrained(
+            model_id,
+            device_map="auto",
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
         )
 
-        # Load only the vision model via vLLM on encoder workers to avoid loading the full LLM weights, significantly reducing memory usage.
-        # Uses native vLLM encoder only model loading added in https://github.com/vllm-project/vllm/pull/32605.
-        # Load only the vision model via vLLM
+    try:
+        # Disable multiprocessing to get ViT from the same process
+        update_environment_variables({"VLLM_ENABLE_V1_MULTIPROCESSING": "0"})
+
+        # Load only the vision model via vLLM to avoid loading full LLM weights.
+        # Uses native vLLM encoder-only loading added in
+        # https://github.com/vllm-project/vllm/pull/32605
         vllm_model = LLM(
             model=model_id,
             enforce_eager=enforce_eager,
-            kv_cache_memory_bytes=1024
+            kv_cache_memory_bytes=64
             * 1024
-            * 64,  # 64MB KV cache for vLLM to complete the init lifecycle, encoder-only doesn't require KV cache.
+            * 1024,  # 64MB: encoder-only doesn't need KV cache
             max_model_len=1,
             mm_encoder_only=True,
             enable_prefix_caching=False,
         )
-        return (
-            vllm_model.llm_engine.engine_core.engine_core.model_executor.driver_worker.worker.model_runner.model.visual
+        model = (
+            vllm_model.llm_engine.engine_core.engine_core.model_executor.driver_worker.worker.model_runner.model
         )
-    return AutoModel.from_pretrained(
-        model_id, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True
-    )
+        _vllm_encoder_active = True
+        logger.info("Loaded vision model via vLLM encoder for '%s'", model_id)
+        return model
+    except Exception as e:
+        _vllm_encoder_active = False
+        logger.warning(
+            "vLLM encoder-only loading failed for '%s': %s. "
+            "Falling back to AutoModel.from_pretrained(). "
+            "This may use more GPU memory as the full model weights are loaded.",
+            model_id,
+            e,
+        )
+        return AutoModel.from_pretrained(
+            model_id,
+            device_map="auto",
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+        )
 
 
 def construct_mm_data(
@@ -199,7 +253,7 @@ def construct_mm_data(
     """Construct multimodal data for a vLLM request for models that require additional parameters alongside the embeddings"""
 
     # Handle video models
-    if is_model_supported(model, SupportedModels.LLAVA_NEXT_VIDEO_7B):
+    if is_video_model(model):
         if video_numpy is None:
             raise ValueError("No video frames provided.")
         return {"video": video_numpy}
@@ -213,8 +267,12 @@ def construct_mm_data(
     # Model-specific image handling
     if is_qwen_vl_model(model):
         return _construct_qwen_image_data(image_embeds, image_grid_thw)
+    elif image_grid_thw is not None and len(image_grid_thw) > 0:
+        # Models that provide grid info but aren't recognized as Qwen
+        # (e.g. future Qwen variants before model_type is added to our detection)
+        return _construct_qwen_image_data(image_embeds, image_grid_thw)
     else:
-        # Default image handling for other models (e.g., LLAVA_1_5_7B)
+        # Default image handling (e.g., LLaVA, generic models)
         return {"image": image_embeds}
 
 
