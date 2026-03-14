@@ -149,6 +149,9 @@ def update_dynamo_config_with_engine(
     elif dynamo_config.multimodal_encode_worker:
         dynamo_config.component = "encoder"
         dynamo_config.endpoint = "generate"
+    elif dynamo_config.multimodal_audio_encode_worker:
+        dynamo_config.component = "encoder"
+        dynamo_config.endpoint = "generate"
     elif dynamo_config.multimodal_decode_worker:
         dynamo_config.component = "decoder"
         dynamo_config.endpoint = "generate"
