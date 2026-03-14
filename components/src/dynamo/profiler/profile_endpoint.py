@@ -23,7 +23,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="profile a given endpoint's performance for prefill or decode"
     )
-    # TODO: use kebab case
     parser.add_argument(
         "--mode",
         type=str,
@@ -32,13 +31,13 @@ if __name__ == "__main__":
         help="mode to profile",
     )
     parser.add_argument(
-        "--model_name",
+        "--model-name",
         type=str,
         required=True,
         help="model name",
     )
     parser.add_argument(
-        "--tokenizer_path",
+        "--tokenizer-path",
         type=str,
         required=False,
         default="",
@@ -51,38 +50,38 @@ if __name__ == "__main__":
         help="base url of the endpoint",
     )
     parser.add_argument(
-        "--num_gpus",
+        "--num-gpus",
         type=int,
         required=True,
         help="number of gpus",
     )
     parser.add_argument(
-        "--max_kv_tokens",
+        "--max-kv-tokens",
         type=int,
         required=False,
         default=0,
         help="max kv tokens of the endpoint (only used for decode)",
     )
     parser.add_argument(
-        "--work_dir",
+        "--work-dir",
         type=str,
         default="endpoint_profiling_results/",
         help="work directory to save the results",
     )
     parser.add_argument(
-        "--max_context_length",
+        "--max-context-length",
         type=int,
         default=16384,
         help="max context length of the endpoint",
     )
     parser.add_argument(
-        "--interpolation_granularity",
+        "--interpolation-granularity",
         type=int,
         default=8,
         help="interpolation granularity for the results",
     )
     parser.add_argument(
-        "--attention_dp_size",
+        "--attention-dp-size",
         type=int,
         default=1,
         help="attention dp size of the endpoint for MoE models",
