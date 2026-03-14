@@ -5,15 +5,11 @@ set -e
 trap 'echo Cleaning up...; kill 0' EXIT
 
 # Default values
-MODEL_NAME="llava-hf/LLaVA-NeXT-Video-7B-hf"
-PROMPT_TEMPLATE="USER: <video>\n<prompt> ASSISTANT:"
+MODEL_NAME="Qwen/Qwen3-VL-7B-Instruct"
 NUM_FRAMES_TO_SAMPLE=8
 
 # run ingress
 python -m dynamo.frontend --http-port=8000 &
-
-# run processor
-python3 components/processor.py --model $MODEL_NAME --prompt-template "$PROMPT_TEMPLATE" &
 
 # run E/P/D workers
 CUDA_VISIBLE_DEVICES=0 python3 components/video_encode_worker.py --model $MODEL_NAME --num-frames-to-sample $NUM_FRAMES_TO_SAMPLE &

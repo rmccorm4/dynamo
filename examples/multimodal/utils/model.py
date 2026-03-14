@@ -28,7 +28,17 @@ class SupportedModels:
     LLAVA_1_5_7B = "llava-hf/llava-1.5-7b-hf"
     QWEN_2_5_VL_7B = "Qwen/Qwen2.5-VL-7B-Instruct"
     LLAVA_NEXT_VIDEO_7B = "llava-hf/LLaVA-NeXT-Video-7B-hf"
+    QWEN_3_VL_7B = "Qwen/Qwen3-VL-7B-Instruct"
     QWEN_2_AUDIO_7B = "Qwen/Qwen2-Audio-7B-Instruct"
+
+
+# Models that consume raw video frames rather than image embeddings
+_VIDEO_MODELS = {SupportedModels.LLAVA_NEXT_VIDEO_7B, SupportedModels.QWEN_3_VL_7B}
+
+
+def is_video_model(model: str) -> bool:
+    """Return True if the model expects raw video frames as input."""
+    return model in _VIDEO_MODELS or "video" in model.lower()
 
 
 def load_vision_model(model_id: str) -> torch.nn.Module:
@@ -54,8 +64,8 @@ def construct_mm_data(
         audio_embeds = audio_embeds.to(torch.bfloat16)
         assert audio_embeds.ndim == 2, "Audio embeddings must be 2D"
         return {"audio": [audio_embeds]}
-    # Handle video models
-    if model == SupportedModels.LLAVA_NEXT_VIDEO_7B:
+    # Handle video models (raw frames passed directly to vLLM)
+    if is_video_model(model):
         if video_numpy is None:
             raise ValueError("No video frames provided.")
         return {"video": video_numpy}

@@ -243,24 +243,27 @@ bash launch/disagg_multimodal_llama.sh
 
 ## Video Serving
 
+<Note>
+**LLaVA-NeXT-Video and custom prompt templates**: `llava-hf/LLaVA-NeXT-Video-7B-hf` does not have a native multimodal chat template that handles video token placement. It requires a custom Jinja-style prompt template to be applied *before* tokenization so that the `<video>` special token is injected at the correct position in the prompt. The example `processor.py` accepts this via `--prompt-template` (e.g., `"USER: <video>\n<prompt> ASSISTANT:"`), applies the template to the user text, and then tokenizes with vLLM's `OpenAIServingChat`. Because this transform must happen before tokenization it requires the custom processor component (`ModelInput.Text`).
+
+Modern models such as `Qwen/Qwen3-VL-7B-Instruct` include video token placement in their built-in chat template, so no custom prompt template is needed. These models can use `ModelInput.Tokens`, which lets the Dynamo SDK handle tokenization and eliminates the need for the separate processor component. The launch scripts default to Qwen3-VL for this reason.
+</Note>
+
 ### Video Aggregated Serving
 
 **Components:**
 
 - workers: [VideoEncodeWorker](https://github.com/ai-dynamo/dynamo/tree/main/examples/multimodal/components/video_encode_worker.py) for decoding video into frames, and [VllmPDWorker](https://github.com/ai-dynamo/dynamo/tree/main/examples/multimodal/components/worker.py) for prefilling and decoding.
-- processor: Tokenizes the prompt and passes it to the VideoEncodeWorker.
 - frontend: HTTP endpoint to handle incoming requests.
 
 **Workflow:**
 
-The VideoEncodeWorker decodes the video into frames. Unlike the image pipeline which generates embeddings, this pipeline passes raw frames directly to the VllmPDWorker via NATS and RDMA.
+The VideoEncodeWorker registers with `ModelInput.Tokens`. The Dynamo SDK tokenizes the incoming request (applying the model's built-in chat template) and forwards the token IDs plus the `video_url` to the VideoEncodeWorker. The VideoEncodeWorker decodes the video into frames and passes raw frames to the VllmPDWorker via RDMA.
 
 ```mermaid
 flowchart LR
-  HTTP --> processor
-  processor --> HTTP
-  processor --video_url--> video_encode_worker
-  video_encode_worker --> processor
+  HTTP --> video_encode_worker
+  video_encode_worker --> HTTP
   video_encode_worker --frames--> pd_worker
   pd_worker --> video_encode_worker
 ```
@@ -278,7 +281,7 @@ bash launch/video_agg.sh
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-      "model": "llava-hf/LLaVA-NeXT-Video-7B-hf",
+      "model": "Qwen/Qwen3-VL-7B-Instruct",
       "messages": [
         {
           "role": "user",
@@ -305,14 +308,12 @@ curl http://localhost:8000/v1/chat/completions \
 
 **Workflow:**
 
-For the LLaVA-NeXT-Video-7B model, frames are only required during the prefill stage. The VideoEncodeWorker is connected directly to the prefill worker, decoding the video into frames and passing them via RDMA.
+Frames are only required during the prefill stage. The VideoEncodeWorker is connected directly to the prefill worker, decoding the video into frames and passing them via RDMA.
 
 ```mermaid
 flowchart LR
-  HTTP --> processor
-  processor --> HTTP
-  processor --video_url--> video_encode_worker
-  video_encode_worker --> processor
+  HTTP --> video_encode_worker
+  video_encode_worker --> HTTP
   video_encode_worker --frames--> prefill_worker
   prefill_worker --> video_encode_worker
   prefill_worker --> decode_worker
@@ -655,7 +656,7 @@ The following models have been tested with Dynamo's vLLM multimodal backend:
 - **Qwen3-VL** - `Qwen/Qwen3-VL-30B-A3B-Instruct-FP8`
 - **LLaVA 1.5** - `llava-hf/llava-1.5-7b-hf`
 - **Llama 4 Maverick** - `meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8`
-- **LLaVA Next Video** - `llava-hf/LLaVA-NeXT-Video-7B-hf`
+- **LLaVA Next Video** - `llava-hf/LLaVA-NeXT-Video-7B-hf` (requires custom `--prompt-template`, see [Video Serving](#video-serving))
 - **Qwen2-Audio** - `Qwen/Qwen2-Audio-7B-Instruct`
 
 For a complete list of multimodal models supported by vLLM, see [vLLM Supported Multimodal Models](https://docs.vllm.ai/en/latest/models/supported_models/#list-of-multimodal-language-models). Models listed there should work with Simple Aggregated Mode but may not be explicitly tested.

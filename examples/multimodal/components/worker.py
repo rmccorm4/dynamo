@@ -37,7 +37,7 @@ from utils.args import (
     parse_endpoint,
 )
 from utils.image_loader import ImageLoader
-from utils.model import construct_mm_data
+from utils.model import construct_mm_data, is_video_model
 from utils.protocol import MyRequestOutput, vLLMMultimodalRequest
 
 configure_dynamo_logging()
@@ -235,7 +235,7 @@ class VllmPDWorker(VllmBaseWorker):
                 f"{parsed_namespace}.{parsed_component_name}.{parsed_endpoint_name}"
             ).client()
 
-        if "video" in self.engine_args.model.lower():
+        if is_video_model(self.engine_args.model):
             self.EMBEDDINGS_DTYPE = torch.uint8
         else:
             self.EMBEDDINGS_DTYPE = torch.float16
@@ -283,7 +283,7 @@ class VllmPDWorker(VllmBaseWorker):
                 request.serialized_request, descriptor
             )
             await read_op.wait_for_completion()
-            if "video" in self.engine_args.model.lower():
+            if is_video_model(self.engine_args.model):
                 video_numpy = embeddings.numpy()
                 multi_modal_data = construct_mm_data(
                     self.engine_args.model,
