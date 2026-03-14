@@ -22,6 +22,7 @@ from dynamo.common.utils.time_section import time_and_log_code_section
 from dynamo.runtime import Client
 
 from .encode_utils import get_embedding_hash
+from .metrics import MultimodalMetricsCollector
 from .model import construct_mm_data
 from .protocol import (
     MultiModalGroup,
@@ -225,6 +226,7 @@ async def _fetch_embeddings(
     receiver: AbstractEmbeddingReceiver,
     cache: MultimodalEmbeddingCacheManager | None = None,
     context=None,
+    metrics: MultimodalMetricsCollector | None = None,
 ) -> tuple[list[MultiModalGroup], _PendingRelease | None]:
     """Fetch multimodal embeddings with transparent cache-through.
 
@@ -250,7 +252,11 @@ async def _fetch_embeddings(
                     loaded_embedding=cached.tensor,
                     image_grid_thw=cached.image_grid_thw,
                 )
+                if metrics is not None:
+                    metrics.record_prefill_cache_hit()
                 continue
+            if metrics is not None:
+                metrics.record_prefill_cache_miss()
         else:
             key = None
         to_fetch.append((idx, url, key))
@@ -297,6 +303,7 @@ async def load_multimodal_embeddings(
     embeddings_dtype: torch.dtype,
     cache: MultimodalEmbeddingCacheManager | None = None,
     context=None,
+    metrics: MultimodalMetricsCollector | None = None,
 ) -> Dict[str, Any]:
     """Fetch embeddings and build engine-ready ``multi_modal_data``.
 
@@ -312,7 +319,12 @@ async def load_multimodal_embeddings(
         receiver,
         cache=cache,
         context=context,
+        metrics=metrics,
     )
+
+    # Update prefill cache hit rate gauge
+    if metrics is not None and cache is not None:
+        metrics.update_prefill_cache_hit_rate(cache.stats.get("hit_rate", 0.0))
 
     multi_modal_data: Dict[str, Any] = defaultdict(list)
     with time_and_log_code_section(

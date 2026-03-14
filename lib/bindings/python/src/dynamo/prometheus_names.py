@@ -342,6 +342,47 @@ class trtllm_additional:
     KV_TRANSFER_SPEED_GB_S = "trtllm_kv_transfer_speed_gb_s"
 
 
+class multimodal:
+    """Multimodal vision encoder pipeline metrics."""
+
+    # Total number of multimodal encode requests processed
+    ENCODE_REQUESTS_TOTAL = "dynamo_multimodal_encode_requests_total"
+    # Total number of images encoded across all requests
+    IMAGES_ENCODED_TOTAL = "dynamo_multimodal_images_encoded_total"
+    # Total number of encode requests that failed
+    ENCODE_ERRORS_TOTAL = "dynamo_multimodal_encode_errors_total"
+    # End-to-end encode request latency in seconds (image load + preprocess + encode + transfer)
+    ENCODE_REQUEST_DURATION_SECONDS = "dynamo_multimodal_encode_request_duration_seconds"
+    # Image loading latency in seconds (download/fetch from URL)
+    IMAGE_LOAD_SECONDS = "dynamo_multimodal_image_load_seconds"
+    # Image preprocessing latency in seconds (AutoImageProcessor)
+    IMAGE_PREPROCESS_SECONDS = "dynamo_multimodal_image_preprocess_seconds"
+    # Vision encoder forward pass latency in seconds
+    VISION_ENCODE_SECONDS = "dynamo_multimodal_vision_encode_seconds"
+    # Embedding transfer preparation latency in seconds (NIXL/local staging)
+    EMBEDDING_TRANSFER_SECONDS = "dynamo_multimodal_embedding_transfer_seconds"
+    # Embedding tensor size in bytes per image
+    EMBEDDING_BYTES = "dynamo_multimodal_embedding_bytes"
+    # Number of images per encode request
+    IMAGES_PER_REQUEST = "dynamo_multimodal_images_per_request"
+    # Embedding cache hit rate (0.0-1.0) on the encode worker
+    ENCODER_CACHE_HIT_RATE = "dynamo_multimodal_encoder_cache_hit_rate"
+    # Embedding cache hits total on the encode worker
+    ENCODER_CACHE_HITS_TOTAL = "dynamo_multimodal_encoder_cache_hits_total"
+    # Embedding cache misses total on the encode worker
+    ENCODER_CACHE_MISSES_TOTAL = "dynamo_multimodal_encoder_cache_misses_total"
+    # Embedding cache current size in bytes
+    ENCODER_CACHE_BYTES = "dynamo_multimodal_encoder_cache_bytes"
+    # Embedding cache entry count
+    ENCODER_CACHE_ENTRIES = "dynamo_multimodal_encoder_cache_entries"
+    # Prefill-side embedding cache hit rate (0.0-1.0)
+    PREFILL_CACHE_HIT_RATE = "dynamo_multimodal_prefill_cache_hit_rate"
+    # Prefill-side embedding cache hits total
+    PREFILL_CACHE_HITS_TOTAL = "dynamo_multimodal_prefill_cache_hits_total"
+    # Prefill-side embedding cache misses total
+    PREFILL_CACHE_MISSES_TOTAL = "dynamo_multimodal_prefill_cache_misses_total"
+
+
 class work_handler:
     """Work handler Prometheus metric names"""
 

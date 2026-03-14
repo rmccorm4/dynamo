@@ -31,6 +31,7 @@ from ..multimodal_utils import (
     vLLMMultimodalRequest,
 )
 from ..multimodal_utils.embedding_cache import EmbeddingCache
+from ..multimodal_utils.metrics import MultimodalMetricsCollector
 from ..multimodal_utils.model import is_qwen_vl_model
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,15 @@ class EncodeWorkerHandler:
                 f"Invalid embedding transfer mode: {embedding_transfer_mode}"
             )
 
+        # Prometheus metrics
+        try:
+            self._metrics = MultimodalMetricsCollector(
+                labels={"model": self.model, "worker_type": "encoder"}
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize multimodal metrics: %s", e)
+            self._metrics = None
+
         self.send_complete_queue: asyncio.Queue[tuple[Any, Any]] = asyncio.Queue()
         self.send_complete_checker_task = asyncio.create_task(
             self.check_complete(self.send_complete_queue)
@@ -156,6 +166,7 @@ class EncodeWorkerHandler:
                 embedding_lists: list[EmbeddingItem | None] = [None] * len(
                     request.multimodal_inputs
                 )
+                num_cache_hits = 0
                 for idx in range(len(request.multimodal_inputs)):
                     if not request.multimodal_inputs[idx].multimodal_input.image_url:
                         raise ValueError("image_url is required for the encode worker.")
@@ -175,11 +186,17 @@ class EncodeWorkerHandler:
                         embedding_lists[idx] = EmbeddingItem(
                             embedding_key, image_grid_thw, embeddings
                         )
+                        num_cache_hits += 1
+                        if self._metrics:
+                            self._metrics.record_encoder_cache_hit()
                     # compute
                     else:
                         # keep track of key to avoid recompute of it
                         need_encode_indexes.append((idx, embedding_key))
+                        if self._metrics:
+                            self._metrics.record_encoder_cache_miss()
 
+            image_load_start = time.perf_counter()
             with _nvtx.annotate(
                 "mm:enc:image_load", color="green"
             ), time_and_log_code_section(
@@ -212,8 +229,12 @@ class EncodeWorkerHandler:
                     raise ValueError(
                         f"Errors occurred during image loading:\n{collective_exceptions}"
                     )
+            image_load_end = time.perf_counter()
+            if self._metrics:
+                self._metrics.record_image_load(image_load_end - image_load_start)
 
             if loaded_images:
+                preprocess_start = time.perf_counter()
                 with _nvtx.annotate(
                     "mm:enc:image_preprocess", color="yellow"
                 ), time_and_log_code_section(
@@ -222,7 +243,13 @@ class EncodeWorkerHandler:
                     image_embeds = await asyncio.to_thread(
                         self.image_processor, images=loaded_images, return_tensors="pt"
                     )
+                preprocess_end = time.perf_counter()
+                if self._metrics:
+                    self._metrics.record_image_preprocess(
+                        preprocess_end - preprocess_start
+                    )
 
+                vision_encode_start = time.perf_counter()
                 with _nvtx.annotate(
                     "mm:enc:vision_encode", color="red"
                 ), time_and_log_code_section(
@@ -235,6 +262,11 @@ class EncodeWorkerHandler:
                         image_embeds=image_embeds,
                         vision_encoder=self.vision_encoder,
                         projector=self.projector,
+                    )
+                vision_encode_end = time.perf_counter()
+                if self._metrics:
+                    self._metrics.record_vision_encode(
+                        vision_encode_end - vision_encode_start
                     )
 
                 with _nvtx.annotate("mm:enc:split_embeddings", color="orange"):
@@ -334,9 +366,33 @@ class EncodeWorkerHandler:
                 f"Average encoding time: {self._accumulated_time / self._processed_requests:.4f} seconds over {self._processed_requests} requests."
             )
 
+            # Record Prometheus metrics
+            if self._metrics:
+                num_images = len(request.multimodal_inputs)
+                self._metrics.record_encode_request(
+                    time_end - time_start, num_images
+                )
+                self._metrics.record_embedding_transfer(
+                    after_transfer_time - before_transfer_time
+                )
+                # Record per-image embedding sizes
+                for item in embedding_lists:
+                    if item is not None:
+                        emb_bytes = (
+                            item.embeddings.element_size() * item.embeddings.numel()
+                        )
+                        self._metrics.record_embedding_size(emb_bytes)
+                # Update cache entry count gauge
+                if self.embedding_cache is not None:
+                    self._metrics.encoder_cache_entries.labels(
+                        *self._metrics._labelvalues
+                    ).set(len(self.embedding_cache.cache))
+
             # Yield transformed request back
             yield request.model_dump_json()
 
         except Exception as e:
             logger.error(f"Error processing request {request_id}: {e}")
+            if self._metrics:
+                self._metrics.record_encode_error()
             raise

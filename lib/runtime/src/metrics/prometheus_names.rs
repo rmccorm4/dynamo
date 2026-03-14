@@ -582,6 +582,64 @@ pub mod trtllm_additional {
     pub const KV_TRANSFER_SPEED_GB_S: &str = "trtllm_kv_transfer_speed_gb_s";
 }
 
+/// Multimodal vision encoder pipeline metrics.
+pub mod multimodal {
+    /// Total number of multimodal encode requests processed
+    pub const ENCODE_REQUESTS_TOTAL: &str = "dynamo_multimodal_encode_requests_total";
+
+    /// Total number of images encoded across all requests
+    pub const IMAGES_ENCODED_TOTAL: &str = "dynamo_multimodal_images_encoded_total";
+
+    /// Total number of encode requests that failed
+    pub const ENCODE_ERRORS_TOTAL: &str = "dynamo_multimodal_encode_errors_total";
+
+    /// End-to-end encode request latency in seconds (image load + preprocess + encode + transfer)
+    pub const ENCODE_REQUEST_DURATION_SECONDS: &str =
+        "dynamo_multimodal_encode_request_duration_seconds";
+
+    /// Image loading latency in seconds (download/fetch from URL)
+    pub const IMAGE_LOAD_SECONDS: &str = "dynamo_multimodal_image_load_seconds";
+
+    /// Image preprocessing latency in seconds (AutoImageProcessor)
+    pub const IMAGE_PREPROCESS_SECONDS: &str = "dynamo_multimodal_image_preprocess_seconds";
+
+    /// Vision encoder forward pass latency in seconds
+    pub const VISION_ENCODE_SECONDS: &str = "dynamo_multimodal_vision_encode_seconds";
+
+    /// Embedding transfer preparation latency in seconds (NIXL/local staging)
+    pub const EMBEDDING_TRANSFER_SECONDS: &str = "dynamo_multimodal_embedding_transfer_seconds";
+
+    /// Embedding tensor size in bytes per image
+    pub const EMBEDDING_BYTES: &str = "dynamo_multimodal_embedding_bytes";
+
+    /// Number of images per encode request
+    pub const IMAGES_PER_REQUEST: &str = "dynamo_multimodal_images_per_request";
+
+    /// Embedding cache hit rate (0.0-1.0) on the encode worker
+    pub const ENCODER_CACHE_HIT_RATE: &str = "dynamo_multimodal_encoder_cache_hit_rate";
+
+    /// Embedding cache hits total on the encode worker
+    pub const ENCODER_CACHE_HITS_TOTAL: &str = "dynamo_multimodal_encoder_cache_hits_total";
+
+    /// Embedding cache misses total on the encode worker
+    pub const ENCODER_CACHE_MISSES_TOTAL: &str = "dynamo_multimodal_encoder_cache_misses_total";
+
+    /// Embedding cache current size in bytes
+    pub const ENCODER_CACHE_BYTES: &str = "dynamo_multimodal_encoder_cache_bytes";
+
+    /// Embedding cache entry count
+    pub const ENCODER_CACHE_ENTRIES: &str = "dynamo_multimodal_encoder_cache_entries";
+
+    /// Prefill-side embedding cache hit rate (0.0-1.0)
+    pub const PREFILL_CACHE_HIT_RATE: &str = "dynamo_multimodal_prefill_cache_hit_rate";
+
+    /// Prefill-side embedding cache hits total
+    pub const PREFILL_CACHE_HITS_TOTAL: &str = "dynamo_multimodal_prefill_cache_hits_total";
+
+    /// Prefill-side embedding cache misses total
+    pub const PREFILL_CACHE_MISSES_TOTAL: &str = "dynamo_multimodal_prefill_cache_misses_total";
+}
+
 // KV cache statistics metrics
 pub mod kvstats {
     /// Total number of KV cache blocks available on the worker
