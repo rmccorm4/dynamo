@@ -328,22 +328,23 @@ bash launch/video_disagg.sh
 
 ## Audio Serving
 
+`Qwen/Qwen2-Audio-7B-Instruct` includes audio token placement (`<|audio_bos|><|AUDIO|><|audio_eos|>`) in its built-in chat template, so the Dynamo SDK can tokenize the request directly. The AudioEncodeWorker registers with `ModelInput.Tokens` and is the frontend-facing endpoint — no separate processor component is required.
+
 ### Audio Aggregated Serving
 
 **Components:**
 
-- workers: [AudioEncodeWorker](https://github.com/ai-dynamo/dynamo/tree/main/examples/multimodal/components/audio_encode_worker.py) for decoding audio into embeddings, and [VllmPDWorker](https://github.com/ai-dynamo/dynamo/tree/main/examples/multimodal/components/worker.py) for prefilling and decoding.
-- processor: Tokenizes the prompt and passes it to the AudioEncodeWorker.
+- workers: [AudioEncodeWorker](https://github.com/ai-dynamo/dynamo/tree/main/examples/multimodal/components/audio_encode_worker.py) for encoding audio into embeddings, and [VllmPDWorker](https://github.com/ai-dynamo/dynamo/tree/main/examples/multimodal/components/worker.py) for prefilling and decoding.
 - frontend: HTTP endpoint to handle incoming requests.
 
 **Workflow:**
 
+The AudioEncodeWorker registers with `ModelInput.Tokens`. The Dynamo SDK tokenizes the incoming request and forwards the token IDs plus the `audio_url` to the AudioEncodeWorker. The AudioEncodeWorker encodes the audio and passes embeddings to the VllmPDWorker via RDMA.
+
 ```mermaid
 flowchart LR
-  HTTP --> processor
-  processor --> HTTP
-  processor --audio_url--> audio_encode_worker
-  audio_encode_worker --> processor
+  HTTP --> audio_encode_worker
+  audio_encode_worker --> HTTP
   audio_encode_worker --embeddings--> pd_worker
   pd_worker --> audio_encode_worker
 ```
@@ -351,7 +352,6 @@ flowchart LR
 **Launch:**
 
 ```bash
-pip install 'vllm[audio]' accelerate # multimodal audio models dependency
 cd $DYNAMO_HOME/examples/multimodal
 bash launch/audio_agg.sh
 ```
@@ -390,14 +390,12 @@ curl http://localhost:8000/v1/chat/completions \
 
 **Workflow:**
 
-For the Qwen2-Audio model, audio embeddings are only required during the prefill stage. The AudioEncodeWorker is connected directly to the prefill worker.
+Audio embeddings are only required during the prefill stage. The AudioEncodeWorker is connected directly to the prefill worker.
 
 ```mermaid
 flowchart LR
-  HTTP --> processor
-  processor --> HTTP
-  processor --audio_url--> audio_encode_worker
-  audio_encode_worker --> processor
+  HTTP --> audio_encode_worker
+  audio_encode_worker --> HTTP
   audio_encode_worker --embeddings--> prefill_worker
   prefill_worker --> audio_encode_worker
   prefill_worker --> decode_worker
@@ -407,7 +405,6 @@ flowchart LR
 **Launch:**
 
 ```bash
-pip install 'vllm[audio]' accelerate # multimodal audio models dependency
 cd $DYNAMO_HOME/examples/multimodal
 bash launch/audio_disagg.sh
 ```

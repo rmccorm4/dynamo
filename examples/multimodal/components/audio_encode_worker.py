@@ -19,6 +19,7 @@ import logging
 import os
 import signal
 import sys
+import uuid
 from typing import AsyncIterator, Tuple
 
 import torch
@@ -28,13 +29,15 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
 import dynamo.nixl_connect as connect
+from dynamo.llm import ModelInput, ModelType, register_model
 from dynamo.runtime import Client, DistributedRuntime, dynamo_worker
 from dynamo.runtime.logging import configure_dynamo_logging
+from dynamo.vllm.handlers import build_sampling_params
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from utils.args import Config, base_parse_args, parse_endpoint
 from utils.audio_loader import AudioLoader
-from utils.protocol import MyRequestOutput, vLLMMultimodalRequest
+from utils.protocol import MultiModalInput, MyRequestOutput, PatchedTokensPrompt, vLLMMultimodalRequest
 
 configure_dynamo_logging()
 logger = logging.getLogger(__name__)
@@ -65,6 +68,7 @@ class VllmEncodeWorker:
         self.pd_worker_client = pd_worker_client
         self.engine_args = engine_args
         self.model = self.engine_args.model
+        self.default_sampling_params = self.engine_args.create_model_config().get_diff_sampling_param()
 
         self.audio_loader = AudioLoader(cache_size=CACHE_SIZE_MAXIMUM)
         self.audio_processor = AutoProcessor.from_pretrained(
@@ -134,15 +138,35 @@ class VllmEncodeWorker:
     def cleanup(self):
         pass
 
+    def _parse_request(self, raw_request) -> vLLMMultimodalRequest:
+        """Parse a request from either the Rust SDK (dict) or legacy processor format."""
+        if isinstance(raw_request, dict):
+            # Rust SDK format (ModelInput.Tokens): token_ids + multi_modal_data
+            audio_url = None
+            mm_data = raw_request.get("multi_modal_data") or {}
+            for item in mm_data.get("audio_url", []):
+                if isinstance(item, dict) and "Url" in item:
+                    audio_url = item["Url"]
+                    break
+            sampling_params = build_sampling_params(raw_request, self.default_sampling_params)
+            return vLLMMultimodalRequest(
+                engine_prompt=PatchedTokensPrompt(
+                    prompt_token_ids=raw_request["token_ids"]
+                ),
+                sampling_params=sampling_params,
+                request_id=str(uuid.uuid4().hex),
+                model=raw_request.get("model"),
+                multimodal_input=MultiModalInput(audio_url=audio_url),
+            )
+        if isinstance(raw_request, str):
+            return vLLMMultimodalRequest.model_validate_json(raw_request)
+        return vLLMMultimodalRequest.model_validate(raw_request)
+
     async def generate(
-        self, request: vLLMMultimodalRequest
+        self, raw_request
     ) -> AsyncIterator[MyRequestOutput]:
-        logger.debug(f"Got raw request: {request}")
-        if not isinstance(request, vLLMMultimodalRequest):
-            if isinstance(request, str):
-                request = vLLMMultimodalRequest.model_validate_json(request)
-            else:
-                request = vLLMMultimodalRequest.model_validate(request)
+        logger.debug(f"Got raw request: {raw_request}")
+        request = self._parse_request(raw_request)
         logger.debug(f"Received encode request: {{ id: {request.request_id} }}.")
 
         request_id = request.request_id
@@ -283,6 +307,15 @@ async def init(runtime: DistributedRuntime, args: argparse.Namespace, config: Co
 
     logger.info("Waiting for PD Worker Instances ...")
     await pd_worker_client.wait_for_instances()
+
+    await register_model(
+        ModelInput.Tokens,
+        ModelType.Chat,
+        generate_endpoint,
+        config.model,
+        config.served_model_name,
+        kv_cache_block_size=config.engine_args.block_size,
+    )
 
     logger.info(f"Starting to serve the {args.endpoint} endpoint...")
 
