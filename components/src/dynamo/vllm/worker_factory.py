@@ -15,6 +15,7 @@ from dynamo.runtime import DistributedRuntime
 from .args import Config
 from .constants import DisaggregationMode
 from .multimodal_handlers import (
+    AudioEncodeWorkerHandler,
     EncodeWorkerHandler,
     MultimodalDecodeWorkerHandler,
     MultimodalPDWorkerHandler,
@@ -50,6 +51,7 @@ class WorkerFactory:
             config.multimodal_encode_worker
             or config.multimodal_worker
             or config.multimodal_decode_worker
+            or config.multimodal_audio_encode_worker
         )
 
     async def create(
@@ -62,7 +64,11 @@ class WorkerFactory:
     ) -> None:
         """Create the appropriate multimodal worker based on config flags."""
 
-        if config.multimodal_encode_worker:
+        if config.multimodal_audio_encode_worker:
+            await self._create_audio_encode_worker(
+                runtime, config, shutdown_event, shutdown_endpoints
+            )
+        elif config.multimodal_encode_worker:
             await self._create_multimodal_encode_worker(
                 runtime, config, shutdown_event, shutdown_endpoints
             )
@@ -235,6 +241,62 @@ class WorkerFactory:
             await asyncio.gather(*serve_tasks)
         except Exception as e:
             logger.error(f"Failed to serve endpoints: {e}")
+            raise
+        finally:
+            handler.cleanup()
+
+    async def _create_audio_encode_worker(
+        self,
+        runtime: DistributedRuntime,
+        config: Config,
+        shutdown_event: asyncio.Event,
+        shutdown_endpoints: list,  # mutated in place
+    ) -> None:
+        """Initialize standalone audio encode worker (Qwen2-Audio).
+
+        Downloads audio, runs it through the audio tower and multi-modal
+        projector, and transfers the resulting embeddings to the downstream PD
+        worker via RDMA.  Registered with ``ModelInput.Tokens`` so the Rust
+        frontend dispatches requests that already carry token IDs alongside an
+        audio URL.
+        """
+        from dynamo.llm import ModelType, register_model
+
+        generate_endpoint = runtime.endpoint(
+            f"{config.namespace}.{config.component}.{config.endpoint}"
+        )
+        shutdown_endpoints[:] = [generate_endpoint]
+
+        # Connect to the downstream PD worker
+        pd_worker_client = await runtime.endpoint(
+            f"{config.namespace}.llm.generate"
+        ).client()
+        logger.info("Waiting for PD Worker instances ...")
+        await pd_worker_client.wait_for_instances()
+        logger.info("Connected to PD Worker")
+
+        handler = AudioEncodeWorkerHandler(config.engine_args, pd_worker_client)
+        await handler.async_init(runtime)
+
+        await register_model(
+            ModelInput.Tokens,
+            ModelType.Chat,
+            generate_endpoint,
+            config.model,
+            config.served_model_name,
+            kv_cache_block_size=config.engine_args.block_size,
+        )
+
+        logger.info("Starting to serve the audio encode worker endpoint...")
+
+        try:
+            await asyncio.gather(
+                generate_endpoint.serve_endpoint(
+                    handler.generate, metrics_labels=[("model", config.model)]
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Failed to serve audio encode worker endpoint: {e}")
             raise
         finally:
             handler.cleanup()
