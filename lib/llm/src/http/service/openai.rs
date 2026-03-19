@@ -2846,6 +2846,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_check_for_backend_error_with_http_error_json_in_dynamo_error() {
+        use crate::types::openai::chat_completions::NvCreateChatCompletionStreamResponse;
+        use dynamo_runtime::error::DynamoError;
+        use futures::stream;
+
+        // Simulate what engine.rs produces when a Python HttpError(code=400) is raised:
+        // Annotated::from_error(r#"{"message":"...","code":400}"#)
+        let error_json = r#"{"message":"This message contains an 400error.","code":400}"#;
+        let error_event = Annotated::<NvCreateChatCompletionStreamResponse> {
+            data: None,
+            id: None,
+            event: Some("error".to_string()),
+            comment: None,
+            error: Some(DynamoError::msg(error_json.to_string())),
+        };
+
+        let test_stream = stream::iter(vec![error_event]);
+        let result = check_for_backend_error(test_stream).await;
+
+        assert!(result.is_err());
+        if let Err(error_response) = result {
+            assert_eq!(error_response.0, StatusCode::BAD_REQUEST);
+            assert_eq!(
+                error_response.1.message,
+                "This message contains an 400error."
+            );
+            assert_eq!(error_response.1.code, 400);
+        }
+    }
+
+    #[tokio::test]
     async fn test_check_for_backend_error_with_normal_event() {
         use crate::types::openai::chat_completions::NvCreateChatCompletionStreamResponse;
         use dynamo_async_openai::types::CreateChatCompletionStreamResponse;

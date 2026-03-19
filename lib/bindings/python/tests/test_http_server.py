@@ -161,7 +161,7 @@ async def test_chat_completion_success(http_server):
 @pytest.mark.parametrize(
     "msg_to_code",
     [
-        (MSG_CONTAINS_ERROR, 500),  # # TODO: should be 400, but currently 500
+        (MSG_CONTAINS_ERROR, 400),
         (
             MSG_CONTAINS_INTERNAL_ERROR,
             500,

@@ -16,6 +16,14 @@ use tokio_util::sync::CancellationToken;
 
 use dynamo_runtime::error::{BackendError, DynamoError, ErrorType};
 use dynamo_runtime::logging::get_distributed_tracing_context;
+
+/// Local struct for extracting Python HttpError fields via PyO3.
+/// Mirrors dynamo_llm::http::service::error::HttpError on the Python side.
+#[derive(FromPyObject)]
+struct PythonHttpError {
+    code: u16,
+    message: String,
+}
 pub use dynamo_runtime::{
     pipeline::{AsyncEngine, AsyncEngineContextProvider, Data, ManyOut, ResponseStream, SingleIn},
     protocols::{annotated::Annotated, maybe_error::MaybeError},
@@ -131,6 +139,12 @@ impl PythonServerStreamingEngine {
 enum ResponseProcessingError {
     #[error("python exception: {0}")]
     PythonException(String),
+
+    /// A Python HttpError was raised with a specific HTTP status code.
+    /// The inner string is a JSON payload `{"message":"...","code":NNN}` that
+    /// `extract_backend_error_if_present` can parse to recover the correct status.
+    #[error("http error: {0}")]
+    HttpException(String),
 
     #[error("python generator exit: {0}")]
     PyGeneratorExit(String),
@@ -255,6 +269,11 @@ where
                                     .message("engine shutting down")
                                     .build(),
                             ),
+                            ResponseProcessingError::HttpException(json) => {
+                                // json is already in {"message":"...","code":NNN} format so the
+                                // HTTP layer can parse it and return the correct status code.
+                                Annotated::from_error(json)
+                            }
                             ResponseProcessingError::PythonException(e) => {
                                 Annotated::from_error(format!(
                                     "a python exception was caught while processing the async generator: {}",
@@ -309,12 +328,27 @@ where
     let item = item.map_err(|e| {
         println!();
         let mut is_py_generator_exit = false;
+        let mut http_exception_json: Option<String> = None;
         Python::with_gil(|py| {
             e.display(py);
             is_py_generator_exit = e.is_instance_of::<pyo3::exceptions::PyGeneratorExit>(py);
+            // Check if the Python exception is an HttpError with code + message fields.
+            // If so, encode as JSON so the HTTP layer can recover the correct status code.
+            if !is_py_generator_exit {
+                if let Ok(http_err) = e.value(py).extract::<PythonHttpError>() {
+                    http_exception_json = serde_json::json!({
+                        "message": http_err.message,
+                        "code": http_err.code,
+                    })
+                    .to_string()
+                    .into();
+                }
+            }
         });
         if is_py_generator_exit {
             ResponseProcessingError::PyGeneratorExit(e.to_string())
+        } else if let Some(json) = http_exception_json {
+            ResponseProcessingError::HttpException(json)
         } else {
             ResponseProcessingError::PythonException(e.to_string())
         }
