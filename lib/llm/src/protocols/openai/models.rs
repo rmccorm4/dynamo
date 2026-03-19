@@ -29,11 +29,11 @@ pub struct ModelMetaData {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     permission: Option<Vec<Permission>>,
 
-    // TODO(#30): docstring needed
+    /// ID of the root model this was fine-tuned from; `None` for base models
     #[serde(default, skip_serializing_if = "Option::is_none")]
     root: Option<String>,
 
-    // TODO(#30): docstring needed
+    /// ID of the immediate parent model in the fine-tuning lineage; `None` for base models
     #[serde(default, skip_serializing_if = "Option::is_none")]
     parent: Option<String>,
 }
